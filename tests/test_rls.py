@@ -53,3 +53,17 @@ def test_pooled_connection_does_not_leak_identity():
     with one_conn.begin() as c:  # same physical connection, new transaction
         assert c.execute(text("SELECT count(*) FROM documents")).scalar() == 0
     one_conn.dispose()
+
+def test_every_table_with_owner_id_has_forced_rls():
+    with engine.connect() as c:
+        rows = c.execute(text("""
+            SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+              AND EXISTS (SELECT 1 FROM pg_attribute a
+                          WHERE a.attrelid = c.oid AND a.attname = 'owner_id'
+                            AND NOT a.attisdropped)
+        """)).all()
+    assert len(rows) >= 3  # documents, conversations, messages
+    for name, rls, forced in rows:
+        assert rls and forced, f"{name} is missing Row-Level Security"

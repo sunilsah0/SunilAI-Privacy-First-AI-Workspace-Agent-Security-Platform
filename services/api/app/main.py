@@ -10,6 +10,10 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 from .models import User, Document
 
+from sqlalchemy import select, func
+from .models import User, Document, Conversation, Message
+from .providers import get_provider, DEFAULT_MODEL, SYSTEM_PROMPT
+
   # temporary; we switch to migrations in Phase 3
 
 app = FastAPI(title="VerityAI")
@@ -87,4 +91,77 @@ def read_document(doc_id: UUID, user: User = Depends(current_user), db: Session 
 def delete_document(doc_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     doc = get_my_document(doc_id, user, db)
     db.delete(doc)
+    db.commit()
+
+class ConvIn(BaseModel):
+    title: str = Field(default="New chat", max_length=200)
+
+class MsgIn(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+
+def get_my_conversation(conv_id: UUID, user: User, db: Session) -> Conversation:
+    conv = db.scalar(
+        select(Conversation).where(Conversation.id == conv_id, Conversation.owner_id == user.id)
+    )
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    return conv
+
+@app.post("/conversations", status_code=201)
+def create_conversation(c: ConvIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    conv = Conversation(owner_id=user.id, title=c.title)
+    db.add(conv)
+    db.commit()
+    return {"id": str(conv.id), "title": conv.title}
+
+@app.get("/conversations")
+def list_conversations(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(Conversation).where(Conversation.owner_id == user.id)).all()
+    return [{"id": str(c.id), "title": c.title} for c in rows]
+
+@app.get("/conversations/{conv_id}")
+def read_conversation(conv_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    conv = get_my_conversation(conv_id, user, db)
+    msgs = db.scalars(
+        select(Message).where(Message.conversation_id == conv.id).order_by(Message.position)
+    ).all()
+    return {"id": str(conv.id), "title": conv.title,
+            "messages": [{"role": m.role, "content": m.content} for m in msgs]}
+
+@app.post("/conversations/{conv_id}/messages")
+def send_message(conv_id: UUID, m: MsgIn,
+                 user: User = Depends(current_user), db: Session = Depends(get_db),
+                 provider=Depends(get_provider)):
+    conv = get_my_conversation(conv_id, user, db)   # authorization FIRST, before any AI call
+
+    recent = db.scalars(
+        select(Message).where(Message.conversation_id == conv.id)
+        .order_by(Message.position.desc()).limit(20)
+    ).all()
+    recent.reverse()
+    prompt = (
+        [{"role": "system", "content": SYSTEM_PROMPT}]
+        + [{"role": x.role, "content": x.content} for x in recent]
+        + [{"role": "user", "content": m.content}]
+    )
+
+    try:
+        reply = provider.chat(prompt, DEFAULT_MODEL)
+    except Exception:
+        # No fallback to any cloud service. Fail clearly instead.
+        raise HTTPException(503, "Local AI model is not available. Is Ollama running?")
+
+    last = db.scalar(select(func.max(Message.position)).where(Message.conversation_id == conv.id))
+    nxt = 0 if last is None else last + 1
+    db.add_all([
+        Message(conversation_id=conv.id, owner_id=user.id, role="user", content=m.content, position=nxt),
+        Message(conversation_id=conv.id, owner_id=user.id, role="assistant", content=reply, position=nxt + 1),
+    ])
+    db.commit()
+    return {"reply": reply}
+
+@app.delete("/conversations/{conv_id}", status_code=204)
+def delete_conversation(conv_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    conv = get_my_conversation(conv_id, user, db)
+    db.delete(conv)
     db.commit()
