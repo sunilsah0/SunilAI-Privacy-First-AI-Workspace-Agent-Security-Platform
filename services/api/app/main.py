@@ -3,14 +3,15 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .db import Base, engine, get_db
+from .db import get_db, set_rls_user
 from .models import User
 from .security import hash_password, verify_password, create_token, read_token
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 from .models import User, Document
 
-Base.metadata.create_all(engine)  # temporary; we switch to migrations in Phase 3
+  # temporary; we switch to migrations in Phase 3
+
 app = FastAPI(title="VerityAI")
 bearer = HTTPBearer()
 
@@ -27,7 +28,9 @@ def current_user(cred: HTTPAuthorizationCredentials = Depends(bearer),
     user = db.get(User, uid)
     if not user:
         raise HTTPException(401, "Invalid or expired token")
+    set_rls_user(db, user.id)
     return user
+
 
 @app.post("/auth/register", status_code=201)
 def register(c: Creds, db: Session = Depends(get_db)):
