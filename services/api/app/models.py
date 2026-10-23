@@ -7,6 +7,9 @@ from .db import Base
 from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, UniqueConstraint
 from pgvector.sqlalchemy import Vector
 
+from sqlalchemy import String, DateTime, ForeignKey, Text, Integer, UniqueConstraint, Boolean
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -49,3 +52,31 @@ class Chunk(Base):
     position: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(Vector(768))
+
+class ToolPermission(Base):
+    __tablename__ = "tool_permissions"
+    __table_args__ = (UniqueConstraint("owner_id", "tool"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tool: Mapped[str] = mapped_column(String(100))
+    enabled: Mapped[bool] = mapped_column(Boolean)
+
+class PendingAction(Base):
+    __tablename__ = "pending_actions"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tool: Mapped[str] = mapped_column(String(100))
+    args: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(20))   # pending / executed / rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(String(50))
+    tool: Mapped[str] = mapped_column(String(100))
+    outcome: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str] = mapped_column(String(500))
+    target: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

@@ -19,6 +19,10 @@ from .models import User, Document, Conversation, Message, Chunk
 from .providers import get_provider, DEFAULT_MODEL, SYSTEM_PROMPT, EMBED_DIM
 from .rag import extract_text, split_text, search_chunks
   # temporary; we switch to migrations in Phase 3
+from .models import User, Document, Conversation, Message, Chunk, ToolPermission, PendingAction, AuditEvent
+from .policy import REGISTRY, NETWORK_ALLOWED
+from .agent import (audit, load_grants, parse_proposal, build_agent_prompt,
+                    handle_proposal, approve_pending)
 
 app = FastAPI(title="VerityAI")
 bearer = HTTPBearer()
@@ -235,3 +239,83 @@ def search(q: SearchIn, user: User = Depends(current_user), db: Session = Depend
         return search_chunks(db, user.id, provider, q.query, q.k)
     except Exception:
         raise HTTPException(503, "Local embedding model is not available. Is Ollama running?")
+
+class AskIn(BaseModel):
+    instruction: str = Field(min_length=1, max_length=4000)
+    use_documents: bool = False
+
+class PermIn(BaseModel):
+    enabled: bool
+
+@app.get("/permissions")
+def list_permissions(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    granted = load_grants(db, user.id)
+    return [{"tool": t.name, "description": t.description,
+             "enabled": granted.get(t.name, t.enabled_by_default),
+             "requires_approval": t.requires_approval,
+             "needs_network": t.needs_network,
+             "blocked_by_network_policy": t.needs_network and not NETWORK_ALLOWED}
+            for t in REGISTRY.values()]
+
+@app.put("/permissions/{tool}")
+def set_permission(tool: str, p: PermIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if tool not in REGISTRY:
+        raise HTTPException(404, "Unknown tool")
+    row = db.scalar(select(ToolPermission).where(
+        ToolPermission.owner_id == user.id, ToolPermission.tool == tool))
+    if row:
+        row.enabled = p.enabled
+    else:
+        db.add(ToolPermission(owner_id=user.id, tool=tool, enabled=p.enabled))
+    audit(db, user.id, "permission_changed", tool,
+          "enabled" if p.enabled else "disabled", "Changed by user")
+    db.commit()
+    return {"tool": tool, "enabled": p.enabled}
+
+@app.post("/agent/ask")
+def agent_ask(a: AskIn, user: User = Depends(current_user), db: Session = Depends(get_db),
+              provider=Depends(get_provider)):
+    try:
+        hits = search_chunks(db, user.id, provider, a.instruction, k=4) if a.use_documents else []
+        raw = provider.chat(build_agent_prompt(a.instruction, hits), DEFAULT_MODEL)
+    except Exception:
+        raise HTTPException(503, "Local AI model is not available. Is Ollama running?")
+    proposal = parse_proposal(raw)
+    if proposal is None:
+        return {"status": "no_action", "reply": raw}
+    return handle_proposal(db, user, provider, proposal)
+
+def get_my_pending(pid: UUID, user: User, db: Session) -> PendingAction:
+    p = db.scalar(select(PendingAction).where(
+        PendingAction.id == pid, PendingAction.owner_id == user.id,
+        PendingAction.status == "pending"))
+    if not p:
+        raise HTTPException(404, "Pending action not found")
+    return p
+
+@app.get("/agent/pending")
+def list_pending(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(PendingAction).where(
+        PendingAction.owner_id == user.id, PendingAction.status == "pending")
+        .order_by(PendingAction.created_at)).all()
+    return [{"id": str(p.id), "tool": p.tool, "args": p.args} for p in rows]
+
+@app.post("/agent/pending/{pid}/approve")
+def approve_action(pid: UUID, user: User = Depends(current_user), db: Session = Depends(get_db),
+                   provider=Depends(get_provider)):
+    return approve_pending(db, user, provider, get_my_pending(pid, user, db))
+
+@app.post("/agent/pending/{pid}/reject")
+def reject_action(pid: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    p = get_my_pending(pid, user, db)
+    p.status = "rejected"
+    audit(db, user.id, "approval", p.tool, "rejected", "Rejected by user", p.args.get("document_id", ""))
+    db.commit()
+    return {"status": "rejected"}
+
+@app.get("/audit")
+def list_audit(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(AuditEvent).where(AuditEvent.owner_id == user.id)
+                      .order_by(AuditEvent.created_at.desc()).limit(50)).all()
+    return [{"time": e.created_at.isoformat(), "event": e.event, "tool": e.tool,
+             "outcome": e.outcome, "reason": e.reason, "target": e.target} for e in rows]
