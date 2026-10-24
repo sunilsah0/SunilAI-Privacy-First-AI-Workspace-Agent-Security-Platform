@@ -11,8 +11,12 @@ from pydantic import BaseModel, EmailStr, Field
 from .models import User, Document
 from pgvector.sqlalchemy import Vector
 
-from sqlalchemy import select, func
-from .models import User, Document, Conversation, Message
+from sqlalchemy import select, func, text as sql_text
+from .models import (User, Document, Conversation, Message, Chunk, ToolPermission, PendingAction,
+                     AuditEvent, Organization, Membership, OrgDocument, OrgAuditEvent)
+from .orgs import (ASSIGNABLE_BY, CAN_MANAGE_MEMBERS, CAN_VIEW_MEMBERS, CAN_VIEW_AUDIT,
+                   CAN_USE_SHARED_DOCS, CAN_DELETE_ANY_SHARED_DOC, require_role, org_audit)
+
 from .providers import get_provider, DEFAULT_MODEL, SYSTEM_PROMPT
 from fastapi import FastAPI, Depends, HTTPException, UploadFile
 from .models import User, Document, Conversation, Message, Chunk
@@ -339,3 +343,139 @@ def verify_network(v: VerifyIn, user: User = Depends(current_user)):
                                  'Send {"confirm": true} to proceed.')
     privacy.record_probe(network_guard.raw_probe())
     return {"result": privacy.last_probe["result"], "time": privacy.last_probe["time"]}
+
+class OrgIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+class MemberIn(BaseModel):
+    email: EmailStr
+    role: str
+
+class MemberPatch(BaseModel):
+    role: str | None = None
+    status: str | None = None
+
+class SharedDocIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(max_length=100_000)
+
+@app.post("/orgs", status_code=201)
+def create_org(o: OrgIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    org_id = db.execute(sql_text("SELECT create_organization(:n)"), {"n": o.name}).scalar_one()
+    org_audit(db, org_id, user.id, "org_created", "Organization created")
+    db.commit()
+    return {"id": str(org_id), "name": o.name, "role": "owner"}
+
+@app.get("/orgs")
+def list_orgs(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Organization.id, Organization.name, Membership.role)
+        .join(Membership, Membership.org_id == Organization.id)
+        .where(Membership.user_id == user.id, Membership.status == "active")
+    ).all()
+    return [{"id": str(r.id), "name": r.name, "role": r.role} for r in rows]
+
+@app.get("/orgs/{org_id}/members")
+def list_members(org_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, CAN_VIEW_MEMBERS)
+    rows = db.execute(
+        select(User.id, User.email, Membership.role, Membership.status)
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.org_id == org_id)
+    ).all()
+    return [{"user_id": str(r.id), "email": r.email, "role": r.role, "status": r.status} for r in rows]
+
+@app.post("/orgs/{org_id}/members", status_code=201)
+def add_member(org_id: UUID, m: MemberIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    my_role = require_role(db, user.id, org_id, CAN_MANAGE_MEMBERS)
+    if m.role not in ASSIGNABLE_BY[my_role]:
+        raise HTTPException(403, "You cannot assign that role")
+    target = db.scalar(select(User).where(User.email == m.email))
+    if not target:
+        raise HTTPException(404, "No registered user with that email")
+    if db.scalar(select(Membership).where(Membership.org_id == org_id, Membership.user_id == target.id)):
+        raise HTTPException(409, "Already a member")
+    db.add(Membership(org_id=org_id, user_id=target.id, role=m.role, status="active"))
+    org_audit(db, org_id, user.id, "member_added", f"user {target.id} added as {m.role}")
+    db.commit()
+    return {"user_id": str(target.id), "role": m.role}
+
+@app.patch("/orgs/{org_id}/members/{target_id}")
+def update_member(org_id: UUID, target_id: UUID, p: MemberPatch,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    my_role = require_role(db, user.id, org_id, CAN_MANAGE_MEMBERS)
+    if target_id == user.id:
+        raise HTTPException(400, "You cannot change your own membership")
+    target = db.scalar(select(Membership).where(Membership.org_id == org_id, Membership.user_id == target_id))
+    if not target:
+        raise HTTPException(404, "Member not found")
+    if my_role != "owner" and target.role == "owner":
+        raise HTTPException(403, "Only an owner can change an owner")
+    if p.role is not None and p.role not in ASSIGNABLE_BY[my_role]:
+        raise HTTPException(403, "You cannot assign that role")
+    if p.status is not None and p.status not in ("active", "suspended"):
+        raise HTTPException(400, "Status must be 'active' or 'suspended'")
+
+    changes = []
+    if p.role is not None and p.role != target.role:
+        changes.append(f"role {target.role} -> {p.role}")
+        target.role = p.role
+    if p.status is not None and p.status != target.status:
+        changes.append(f"status {target.status} -> {p.status}")
+        target.status = p.status
+    if not changes:
+        return {"changed": False}
+    org_audit(db, org_id, user.id, "member_updated", f"user {target_id}: " + ", ".join(changes))
+    db.commit()
+    return {"changed": True}
+
+def get_org_document(org_id: UUID, doc_id: UUID, db: Session) -> OrgDocument:
+    doc = db.scalar(select(OrgDocument).where(OrgDocument.id == doc_id, OrgDocument.org_id == org_id))
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return doc
+
+@app.post("/orgs/{org_id}/documents", status_code=201)
+def create_shared_doc(org_id: UUID, d: SharedDocIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, CAN_USE_SHARED_DOCS)
+    doc = OrgDocument(org_id=org_id, created_by=user.id, title=d.title, content=d.content)
+    db.add(doc)
+    db.flush()
+    doc_id = doc.id
+    org_audit(db, org_id, user.id, "shared_doc_created", f"document {doc_id}")
+    db.commit()
+    return {"id": str(doc_id), "title": d.title}
+
+@app.get("/orgs/{org_id}/documents")
+def list_shared_docs(org_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, CAN_USE_SHARED_DOCS)
+    rows = db.scalars(select(OrgDocument).where(OrgDocument.org_id == org_id)).all()
+    return [{"id": str(x.id), "title": x.title, "created_by": str(x.created_by)} for x in rows]
+
+@app.get("/orgs/{org_id}/documents/{doc_id}")
+def read_shared_doc(org_id: UUID, doc_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, CAN_USE_SHARED_DOCS)
+    doc = get_org_document(org_id, doc_id, db)
+    return {"id": str(doc.id), "title": doc.title, "content": doc.content}
+
+@app.delete("/orgs/{org_id}/documents/{doc_id}", status_code=204)
+def delete_shared_doc(org_id: UUID, doc_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    role = require_role(db, user.id, org_id, CAN_USE_SHARED_DOCS)
+    doc = get_org_document(org_id, doc_id, db)
+    if role not in CAN_DELETE_ANY_SHARED_DOC and doc.created_by != user.id:
+        raise HTTPException(403, "You can only delete your own shared documents")
+    db.delete(doc)
+    org_audit(db, org_id, user.id, "shared_doc_deleted", f"document {doc_id}")
+    db.commit()
+
+@app.get("/orgs/{org_id}/audit")
+def org_audit_log(org_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, CAN_VIEW_AUDIT)
+    rows = db.execute(
+        select(OrgAuditEvent.created_at, OrgAuditEvent.event, OrgAuditEvent.detail, User.email)
+        .join(User, User.id == OrgAuditEvent.actor_id)
+        .where(OrgAuditEvent.org_id == org_id)
+        .order_by(OrgAuditEvent.created_at.desc()).limit(100)
+    ).all()
+    return [{"time": r.created_at.isoformat(), "actor": r.email, "event": r.event, "detail": r.detail}
+            for r in rows]

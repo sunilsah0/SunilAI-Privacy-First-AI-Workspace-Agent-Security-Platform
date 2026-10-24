@@ -83,8 +83,9 @@ def run_checks(db) -> list[dict]:
     bad = db.execute(text("""
         SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public' AND c.relkind = 'r'
-          AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
-                      AND a.attname = 'owner_id' AND NOT a.attisdropped)
+                    AND (c.relname = 'organizations' OR EXISTS (
+                SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid
+                  AND a.attname IN ('owner_id', 'org_id') AND NOT a.attisdropped))
           AND NOT (c.relrowsecurity AND c.relforcerowsecurity)
     """)).scalars().all()
     title = "Row-Level Security on all user-data tables"
