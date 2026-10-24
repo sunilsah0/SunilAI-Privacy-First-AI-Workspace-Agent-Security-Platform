@@ -7,7 +7,7 @@ import {
 
 export type Org = { id: string; name: string; role: string };
 type Member = { user_id: string; email: string; role: string; status: string };
-type SharedDoc = { id: string; title: string; created_by: string };
+type SharedDoc = { id: string; title: string; created_by: string | null };
 type AuditRow = { time: string; actor: string; event: string; detail: string };
 
 export default function OrgPanel({ org, me }: { org: Org; me: { id: string } }) {

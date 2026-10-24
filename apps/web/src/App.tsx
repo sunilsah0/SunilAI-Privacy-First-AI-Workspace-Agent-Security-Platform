@@ -6,14 +6,17 @@ import Documents from "./components/Documents";
 import Agent from "./components/Agent";
 import Privacy from "./components/Privacy";
 import Organization from "./components/Organization";
+import YourData from "./components/YourData";
 
-   type Tab = "chat" | "documents" | "organization" | "agent" | "privacy";
+   type Tab = "chat" | "documents" | "organization" | "agent" | "data" | "privacy";
    const TABS: { id: Tab; label: string }[] = [
      { id: "chat", label: "Chat" },
      { id: "documents", label: "Documents" },
      { id: "organization", label: "Organization" },
      { id: "agent", label: "Agent permissions" },
+     { id: "data", label: "My data" },
      { id: "privacy", label: "Privacy status" },
+    
    ];
 
 export default function App() {
@@ -57,6 +60,7 @@ export default function App() {
             {tab === "chat" && <Chat />}
             {tab === "documents" && <Documents />}
             {tab === "agent" && <Agent />}
+            {tab === "data" && <YourData onDeleted={logout} />}
             {tab === "privacy" && <Privacy />}
             {tab === "organization" && <Organization />}
           </main>

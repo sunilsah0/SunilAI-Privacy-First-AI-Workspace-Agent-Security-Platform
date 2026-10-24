@@ -29,7 +29,11 @@ from .agent import (audit, load_grants, parse_proposal, build_agent_prompt,
                     handle_proposal, approve_pending)
 
 from . import network_guard, privacy
+from datetime import datetime, timedelta, timezone
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session, aliased
 
+from .models import UserSettings, BreakGlassGrant, BreakGlassAccessLog
 
 app = FastAPI(title="VerityAI")
 if network_guard.OFFLINE_MODE:
@@ -450,7 +454,7 @@ def create_shared_doc(org_id: UUID, d: SharedDocIn, user: User = Depends(current
 def list_shared_docs(org_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     require_role(db, user.id, org_id, CAN_USE_SHARED_DOCS)
     rows = db.scalars(select(OrgDocument).where(OrgDocument.org_id == org_id)).all()
-    return [{"id": str(x.id), "title": x.title, "created_by": str(x.created_by)} for x in rows]
+    return [{"id": str(x.id), "title": x.title, "created_by": str(x.created_by) if x.created_by else None} for x in rows]
 
 @app.get("/orgs/{org_id}/documents/{doc_id}")
 def read_shared_doc(org_id: UUID, doc_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -473,9 +477,217 @@ def org_audit_log(org_id: UUID, user: User = Depends(current_user), db: Session 
     require_role(db, user.id, org_id, CAN_VIEW_AUDIT)
     rows = db.execute(
         select(OrgAuditEvent.created_at, OrgAuditEvent.event, OrgAuditEvent.detail, User.email)
-        .join(User, User.id == OrgAuditEvent.actor_id)
+        .outerjoin(User, User.id == OrgAuditEvent.actor_id)
         .where(OrgAuditEvent.org_id == org_id)
         .order_by(OrgAuditEvent.created_at.desc()).limit(100)
     ).all()
-    return [{"time": r.created_at.isoformat(), "actor": r.email, "event": r.event, "detail": r.detail}
+    return [{"time": r.created_at.isoformat(), "actor": r.email or "(deleted user)",
+             "event": r.event, "detail": r.detail} for r in rows]
+
+class BreakGlassIn(BaseModel):
+    target_user_id: UUID
+    reason: str = Field(min_length=20, max_length=500)
+    duration_minutes: int = Field(ge=5, le=60)
+
+def get_org_grant(org_id: UUID, grant_id: UUID, db: Session) -> BreakGlassGrant:
+    g = db.scalar(select(BreakGlassGrant).where(
+        BreakGlassGrant.id == grant_id, BreakGlassGrant.org_id == org_id))
+    if not g:
+        raise HTTPException(404, "Request not found")
+    return g
+
+@app.post("/orgs/{org_id}/breakglass", status_code=201)
+def request_break_glass(org_id: UUID, b: BreakGlassIn,
+                        user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, {"owner", "security_admin"})
+    if b.target_user_id == user.id:
+        raise HTTPException(400, "You cannot request access to your own data")
+    if not db.scalar(select(Membership).where(
+            Membership.org_id == org_id, Membership.user_id == b.target_user_id)):
+        raise HTTPException(404, "That person is not a member of this organization")
+    g = BreakGlassGrant(org_id=org_id, requester_id=user.id, target_user_id=b.target_user_id,
+                        reason=b.reason, duration_minutes=b.duration_minutes,
+                        status="pending", requested_at=datetime.now(timezone.utc))
+    db.add(g)
+    db.flush()
+    gid = g.id
+    org_audit(db, org_id, user.id, "breakglass_requested", f"grant {gid} for user {b.target_user_id}")
+    db.commit()
+    return {"id": str(gid), "status": "pending"}
+
+@app.get("/orgs/{org_id}/breakglass")
+def list_break_glass(org_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, {"owner", "security_admin", "auditor"})
+    Req, Tgt = aliased(User), aliased(User)
+    rows = db.execute(
+        select(BreakGlassGrant, Req.email, Tgt.email)
+        .outerjoin(Req, Req.id == BreakGlassGrant.requester_id)
+        .outerjoin(Tgt, Tgt.id == BreakGlassGrant.target_user_id)
+        .where(BreakGlassGrant.org_id == org_id)
+        .order_by(BreakGlassGrant.requested_at.desc()).limit(100)
+    ).all()
+    return [{"id": str(g.id), "requester": r or "(deleted user)", "target": t or "(deleted user)",
+             "target_user_id": str(g.target_user_id) if g.target_user_id else None,
+             "reason": g.reason, "status": g.status, "duration_minutes": g.duration_minutes,
+             "expires_at": g.expires_at.isoformat() if g.expires_at else None}
+            for g, r, t in rows]
+
+def decide_break_glass(org_id: UUID, grant_id: UUID, user: User, db: Session, new_status: str):
+    require_role(db, user.id, org_id, {"owner"})
+    g = get_org_grant(org_id, grant_id, db)
+    if g.status != "pending":
+        raise HTTPException(409, "This request was already decided")
+    if g.requester_id == user.id:
+        raise HTTPException(400, "A different owner must decide your request (two-person rule)")
+    now = datetime.now(timezone.utc)
+    g.status = new_status
+    g.approver_id = user.id
+    g.decided_at = now
+    if new_status == "approved":
+        g.expires_at = now + timedelta(minutes=g.duration_minutes)
+    org_audit(db, org_id, user.id, f"breakglass_{new_status}", f"grant {g.id}")
+    db.commit()
+    return {"status": new_status}
+
+@app.post("/orgs/{org_id}/breakglass/{grant_id}/approve")
+def approve_break_glass(org_id: UUID, grant_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return decide_break_glass(org_id, grant_id, user, db, "approved")
+
+@app.post("/orgs/{org_id}/breakglass/{grant_id}/deny")
+def deny_break_glass(org_id: UUID, grant_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return decide_break_glass(org_id, grant_id, user, db, "denied")
+
+@app.post("/orgs/{org_id}/breakglass/{grant_id}/revoke")
+def revoke_break_glass(org_id: UUID, grant_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    require_role(db, user.id, org_id, {"owner"})
+    g = get_org_grant(org_id, grant_id, db)
+    if g.status != "approved":
+        raise HTTPException(409, "Only an approved grant can be revoked")
+    g.status = "revoked"
+    org_audit(db, org_id, user.id, "breakglass_revoked", f"grant {g.id}")
+    db.commit()
+    return {"status": "revoked"}
+
+def get_active_grant(grant_id: UUID, user: User, db: Session) -> BreakGlassGrant:
+    g = db.scalar(select(BreakGlassGrant).where(
+        BreakGlassGrant.id == grant_id, BreakGlassGrant.requester_id == user.id))
+    if (g is None or g.status != "approved" or g.expires_at is None
+            or g.expires_at <= datetime.now(timezone.utc)):
+        raise HTTPException(404, "No active access grant")
+    require_role(db, user.id, g.org_id, {"owner", "security_admin"})   # access ends if the role ends
+    return g
+
+@app.get("/breakglass/{grant_id}/documents")
+def break_glass_list(grant_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    g = get_active_grant(grant_id, user, db)
+    docs = db.scalars(select(Document).where(Document.owner_id == g.target_user_id)
+                      .order_by(Document.created_at)).all()
+    db.add(BreakGlassAccessLog(grant_id=g.id, org_id=g.org_id, accessor_id=user.id,
+                               target_user_id=g.target_user_id, action="list"))
+    org_audit(db, g.org_id, user.id, "breakglass_list", f"grant {g.id}")
+    db.commit()
+    return [{"id": str(d.id), "title": d.title} for d in docs]
+
+@app.get("/breakglass/{grant_id}/documents/{doc_id}")
+def break_glass_read(grant_id: UUID, doc_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    g = get_active_grant(grant_id, user, db)
+    doc = db.scalar(select(Document).where(Document.id == doc_id, Document.owner_id == g.target_user_id))
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    db.add(BreakGlassAccessLog(grant_id=g.id, org_id=g.org_id, accessor_id=user.id,
+                               target_user_id=g.target_user_id, document_id=doc.id, action="read"))
+    org_audit(db, g.org_id, user.id, "breakglass_read", f"grant {g.id} document {doc.id}")
+    db.commit()
+    return {"id": str(doc.id), "title": doc.title, "content": doc.content}
+
+
+class SettingsIn(BaseModel):
+    conversation_retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+class DeleteMeIn(BaseModel):
+    password: str
+    confirm: bool = False
+
+@app.get("/me/settings")
+def get_my_settings(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = db.scalar(select(UserSettings).where(UserSettings.owner_id == user.id))
+    return {"conversation_retention_days": s.conversation_retention_days if s else None}
+
+@app.put("/me/settings")
+def put_my_settings(body: SettingsIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    s = db.scalar(select(UserSettings).where(UserSettings.owner_id == user.id))
+    if s:
+        s.conversation_retention_days = body.conversation_retention_days
+    else:
+        db.add(UserSettings(owner_id=user.id, conversation_retention_days=body.conversation_retention_days))
+    db.commit()
+    return {"conversation_retention_days": body.conversation_retention_days}
+
+@app.get("/me/access-log")
+def my_access_log(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Who has read my documents under break-glass access."""
+    rows = db.execute(
+        select(BreakGlassAccessLog.created_at, BreakGlassAccessLog.action,
+               BreakGlassAccessLog.document_id, User.email, Organization.name)
+        .outerjoin(User, User.id == BreakGlassAccessLog.accessor_id)
+        .outerjoin(Organization, Organization.id == BreakGlassAccessLog.org_id)
+        .where(BreakGlassAccessLog.target_user_id == user.id)
+        .order_by(BreakGlassAccessLog.created_at.desc()).limit(100)
+    ).all()
+    return [{"time": r.created_at.isoformat(), "action": r.action,
+             "document_id": str(r.document_id) if r.document_id else None,
+             "accessor": r.email or "(deleted user)", "organization": r.name}
             for r in rows]
+
+@app.get("/me/export")
+def export_my_data(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    docs = db.scalars(select(Document).where(Document.owner_id == user.id)).all()
+    convs = db.scalars(select(Conversation).where(Conversation.owner_id == user.id)).all()
+    conversations = []
+    for c in convs:
+        msgs = db.scalars(select(Message).where(Message.conversation_id == c.id)
+                          .order_by(Message.position)).all()
+        conversations.append({"title": c.title, "created_at": c.created_at.isoformat(),
+                              "messages": [{"role": m.role, "content": m.content} for m in msgs]})
+    activity = db.scalars(select(AuditEvent).where(AuditEvent.owner_id == user.id)
+                          .order_by(AuditEvent.created_at)).all()
+    orgs = db.execute(
+        select(Organization.name, Membership.role, Membership.status)
+        .select_from(Membership)
+        .outerjoin(Organization, Organization.id == Membership.org_id)
+        .where(Membership.user_id == user.id)
+    ).all()
+    settings = db.scalar(select(UserSettings).where(UserSettings.owner_id == user.id))
+    payload = {
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "account": {"email": user.email, "created_at": user.created_at.isoformat()},
+        "documents": [{"title": d.title, "content": d.content, "created_at": d.created_at.isoformat()} for d in docs],
+        "conversations": conversations,
+        "tool_permissions": load_grants(db, user.id),
+        "activity_log": [{"time": a.created_at.isoformat(), "event": a.event, "tool": a.tool,
+                          "outcome": a.outcome, "reason": a.reason} for a in activity],
+        "organizations": [{"name": o.name or "(not visible)", "role": o.role, "status": o.status} for o in orgs],
+        "settings": {"conversation_retention_days": settings.conversation_retention_days if settings else None},
+        "notes": ["Search indexes (embeddings) are derived data and are not included.",
+                  "Shared organization documents you wrote belong to the organization and are not included."],
+    }
+    return JSONResponse(content=payload,
+                        headers={"Content-Disposition": 'attachment; filename="verityai-export.json"'})
+
+@app.delete("/me")
+def delete_my_account(body: DeleteMeIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not body.confirm:
+        raise HTTPException(400, 'Send "confirm": true to delete your account')
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(403, "Wrong password")
+    owned = db.scalars(select(Membership.org_id).where(
+        Membership.user_id == user.id, Membership.role == "owner", Membership.status == "active")).all()
+    for org_id in owned:
+        other_owners = db.scalar(select(func.count()).select_from(Membership).where(
+            Membership.org_id == org_id, Membership.role == "owner",
+            Membership.status == "active", Membership.user_id != user.id))
+        if other_owners == 0:
+            raise HTTPException(409, "You are the only owner of an organization. Make someone else an owner first.")
+    db.delete(user)      # the database removes everything that belongs to this person
+    db.commit()
+    return {"deleted": True}
