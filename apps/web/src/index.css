@@ -49,3 +49,5 @@ pre { background: var(--bg); border: 1px solid var(--line); padding: .5rem; bord
 table { width: 100%; border-collapse: collapse; font-size: .9rem; display: block; overflow-x: auto; }
 th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--line); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+select { padding: .4rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; }

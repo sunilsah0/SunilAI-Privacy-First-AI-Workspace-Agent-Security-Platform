@@ -5,14 +5,16 @@ import Chat from "./components/Chat";
 import Documents from "./components/Documents";
 import Agent from "./components/Agent";
 import Privacy from "./components/Privacy";
+import Organization from "./components/Organization";
 
-type Tab = "chat" | "documents" | "agent" | "privacy";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "chat", label: "Chat" },
-  { id: "documents", label: "Documents" },
-  { id: "agent", label: "Agent permissions" },
-  { id: "privacy", label: "Privacy status" },
-];
+   type Tab = "chat" | "documents" | "organization" | "agent" | "privacy";
+   const TABS: { id: Tab; label: string }[] = [
+     { id: "chat", label: "Chat" },
+     { id: "documents", label: "Documents" },
+     { id: "organization", label: "Organization" },
+     { id: "agent", label: "Agent permissions" },
+     { id: "privacy", label: "Privacy status" },
+   ];
 
 export default function App() {
   const [email, setEmail] = useState<string | null>(null);   // logged in when not null
@@ -56,6 +58,7 @@ export default function App() {
             {tab === "documents" && <Documents />}
             {tab === "agent" && <Agent />}
             {tab === "privacy" && <Privacy />}
+            {tab === "organization" && <Organization />}
           </main>
         </>
       )}
