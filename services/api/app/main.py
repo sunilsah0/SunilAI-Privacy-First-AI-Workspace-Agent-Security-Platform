@@ -24,7 +24,12 @@ from .policy import REGISTRY, NETWORK_ALLOWED
 from .agent import (audit, load_grants, parse_proposal, build_agent_prompt,
                     handle_proposal, approve_pending)
 
+from . import network_guard, privacy
+
+
 app = FastAPI(title="VerityAI")
+if network_guard.OFFLINE_MODE:
+    network_guard.install_guard()
 bearer = HTTPBearer()
 
 class Creds(BaseModel):
@@ -319,3 +324,18 @@ def list_audit(user: User = Depends(current_user), db: Session = Depends(get_db)
                       .order_by(AuditEvent.created_at.desc()).limit(50)).all()
     return [{"time": e.created_at.isoformat(), "event": e.event, "tool": e.tool,
              "outcome": e.outcome, "reason": e.reason, "target": e.target} for e in rows]
+
+class VerifyIn(BaseModel):
+    confirm: bool = False
+
+@app.get("/privacy/status")
+def privacy_status(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    return {"checks": privacy.run_checks(db), "info": privacy.INFO}
+
+@app.post("/privacy/verify-network")
+def verify_network(v: VerifyIn, user: User = Depends(current_user)):
+    if not v.confirm:
+        raise HTTPException(400, "This makes ONE connection attempt to 1.1.1.1:443. "
+                                 'Send {"confirm": true} to proceed.')
+    privacy.record_probe(network_guard.raw_probe())
+    return {"result": privacy.last_probe["result"], "time": privacy.last_probe["time"]}

@@ -4,8 +4,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # Phase 7 turns this into a real setting enforced by the operating system.
 # For now it is only a flag, so treat it as "configured, not yet enforced".
-NETWORK_ALLOWED = False
+#NETWORK_ALLOWED = False
+from .network_guard import OFFLINE_MODE
 
+# Network tools are blocked by policy whenever strict offline mode is on.
+NETWORK_ALLOWED = not OFFLINE_MODE
 class NoExtra(BaseModel):
     model_config = ConfigDict(extra="forbid")   # unknown arguments are rejected
 
