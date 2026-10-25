@@ -1,6 +1,8 @@
 import socket
+import os
 from datetime import datetime, timezone
 import httpx
+
 from sqlalchemy import text
 from . import network_guard
 from .providers import OLLAMA_URL
@@ -8,8 +10,12 @@ from .providers import OLLAMA_URL
 last_probe = {"result": None, "time": None}   # kept in memory only
 
 INFO = {
-    "database": "PostgreSQL on this computer (127.0.0.1:5433, Docker volume 'pgdata')",
+    "database": "PostgreSQL. Development: 127.0.0.1:5433. Docker release: a private Docker network.",
     "model_server": OLLAMA_URL,
+    "network_scope": ("This computer and private networks only" if network_guard.ALLOW_PRIVATE_NETWORK
+                      else "This computer only"),
+    "network_enforcement": os.getenv("NETWORK_ENFORCEMENT_NOTE",
+                                     "Windows Firewall rule (scripts/offline-on.ps1), if you turned it on"),
     "uploaded_files": "Files are not kept as files. Extracted text and its embeddings are stored in the database only.",
     "telemetry": "This app contains no analytics or telemetry code.",
     "not_covered": "Ollama and Docker are separate programs with their own network behavior (updates, model downloads). Restrict them separately.",
@@ -30,10 +36,10 @@ def run_checks(db) -> list[dict]:
     try:
         httpx.get(f"{OLLAMA_URL}/api/tags", timeout=2).raise_for_status()
         out.append(_c("model_local", title, "verified",
-                      f"A model server answered at {OLLAMA_URL}, a local address."))
+                      f"A model server answered at {OLLAMA_URL}."))
     except Exception:
         out.append(_c("model_local", title, "unverified",
-                      f"Configured for {OLLAMA_URL} (a local address) but nothing answered. Is Ollama running?"))
+                      f"Configured for {OLLAMA_URL} but nothing answered. Is Ollama running?"))
 
     # 2. The setting itself
     title = "Strict offline mode setting"
@@ -50,7 +56,7 @@ def run_checks(db) -> list[dict]:
         out.append(_c("app_guard", title, "failed", "The guard is not installed."))
     else:
         try:
-            socket.create_connection(("203.0.113.10", 80), timeout=1)   # reserved test address
+            socket.create_connection(("1.1.1.1", 443), timeout=1)   # the guard refuses this before any packet is sent
             out.append(_c("app_guard", title, "failed", "An external connection was NOT blocked."))
         except PermissionError:
             out.append(_c("app_guard", title, "verified",

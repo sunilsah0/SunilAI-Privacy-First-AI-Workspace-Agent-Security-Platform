@@ -3,7 +3,7 @@ import os
 import socket
 
 OFFLINE_MODE = os.getenv("OFFLINE_MODE", "1") == "1"   # strict offline is the default
-
+ALLOW_PRIVATE_NETWORK = os.getenv("ALLOW_PRIVATE_NETWORK", "0") == "1"   # only the Docker release turns this on
 _original_connect = socket.socket.connect
 _original_connect_ex = socket.socket.connect_ex
 _installed = False
@@ -12,10 +12,12 @@ def is_local_host(host: str) -> bool:
     if host == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host.split("%")[0]).is_loopback
+        ip = ipaddress.ip_address(host.split("%")[0])
     except ValueError:
-        return False   # a hostname such as example.com: not allowed
-
+        return False                      # a hostname such as example.com: not allowed
+    if ip.is_loopback:
+        return True
+    return ALLOW_PRIVATE_NETWORK and ip.is_private   # public internet addresses are NEVER allowed
 def _check(address) -> None:
     if isinstance(address, tuple) and address:
         host = str(address[0])

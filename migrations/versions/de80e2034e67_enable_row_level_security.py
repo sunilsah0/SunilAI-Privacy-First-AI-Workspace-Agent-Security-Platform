@@ -9,7 +9,12 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+import os
+import re
 
+APP_PASSWORD = os.getenv("APP_DB_PASSWORD", "app_dev_password_change_me")
+if not re.fullmatch(r"[A-Za-z0-9_]{12,}", APP_PASSWORD):
+    raise RuntimeError("APP_DB_PASSWORD must be at least 12 letters, digits or underscores")
 
 # revision identifiers, used by Alembic.
 revision: str = 'de80e2034e67'
@@ -19,11 +24,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("""
+    op.execute(f"""
     DO $$
     BEGIN
       IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'verity_app') THEN
-        CREATE ROLE verity_app LOGIN PASSWORD 'app_dev_password_change_me'
+        CREATE ROLE verity_app LOGIN PASSWORD '{APP_PASSWORD}'
           NOSUPERUSER NOBYPASSRLS;
       END IF;
     END $$;

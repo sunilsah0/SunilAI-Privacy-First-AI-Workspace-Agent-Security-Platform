@@ -10,9 +10,10 @@ EMBED_DIM = 768  # nomic-embed-text produces 768 numbers per text
 SYSTEM_PROMPT = "You are a helpful, concise assistant."
 
 # Safety rule: models must run on THIS computer (no silent cloud)
-if urlparse(OLLAMA_URL).hostname not in ("127.0.0.1", "localhost", "::1"):
-    raise RuntimeError("OLLAMA_URL must point to this computer")
-
+# Safety rule: the model must run on THIS computer, or on a host we explicitly list
+_extra_hosts = {h.strip() for h in os.getenv("ALLOWED_MODEL_HOSTS", "").split(",") if h.strip()}
+if urlparse(OLLAMA_URL).hostname not in ({"127.0.0.1", "localhost", "::1"} | _extra_hosts):
+    raise RuntimeError("OLLAMA_URL must point to this computer (or a host listed in ALLOWED_MODEL_HOSTS)")
 class ModelProvider(Protocol):
     def chat(self, messages: list[dict], model: str) -> str: ...
     def embed(self, texts: list[str]) -> list[list[float]]: ...

@@ -48,3 +48,17 @@ def test_offline_mode_turns_network_tools_off():
     assert NETWORK_ALLOWED is False
     d = decide("send_external_message", {"send_external_message": True}, NETWORK_ALLOWED)
     assert d.outcome == "deny"
+
+
+def test_private_addresses_are_blocked_by_default():
+    assert network_guard.is_local_host("127.0.0.1")
+    assert not network_guard.is_local_host("10.0.0.5")
+    assert not network_guard.is_local_host("192.168.1.20")
+
+def test_private_network_flag_allows_private_but_never_public():
+    root = Path(__file__).resolve().parents[1]
+    code = ("from services.api.app.network_guard import is_local_host as f; "
+            "print(f('10.0.0.5'), f('172.18.0.3'), f('8.8.8.8'), f('1.1.1.1'))")
+    r = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
+                       env={**os.environ, "ALLOW_PRIVATE_NETWORK": "1"})
+    assert r.stdout.split() == ["True", "True", "False", "False"]

@@ -1,0 +1,101 @@
+name: verityai-release     # a different name from your dev setup, so the two never share data
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: verity
+      POSTGRES_PASSWORD: "${DB_OWNER_PASSWORD:?Set DB_OWNER_PASSWORD in .env}"
+      POSTGRES_DB: verity
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verity -d verity"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:                  # runs once with the owner password, then exits
+    build:
+      context: .
+      dockerfile: deployment/containers/api.Dockerfile
+    image: verityai-api:local
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      MIGRATION_DATABASE_URL: "postgresql+psycopg://verity:${DB_OWNER_PASSWORD:?Set DB_OWNER_PASSWORD in .env}@db:5432/verity"
+      APP_DB_PASSWORD: "${DB_APP_PASSWORD:?Set DB_APP_PASSWORD in .env}"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [private]
+    restart: "no"
+
+  api:                      # never sees the owner password
+    build:
+      context: .
+      dockerfile: deployment/containers/api.Dockerfile
+    image: verityai-api:local
+    environment:
+      APP_ENV: production
+      OFFLINE_MODE: "1"
+      ALLOW_PRIVATE_NETWORK: "1"
+      ALLOWED_MODEL_HOSTS: ollama
+      OLLAMA_URL: "http://ollama:11434"
+      DEFAULT_MODEL: "${CHAT_MODEL:-llama3.2:3b}"
+      EMBED_MODEL: "${EMBED_MODEL:-nomic-embed-text}"
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
+      DATABASE_URL: "postgresql+psycopg://verity_app:${DB_APP_PASSWORD:?Set DB_APP_PASSWORD in .env}@db:5432/verity"
+      NETWORK_ENFORCEMENT_NOTE: "Docker private network with no route to the internet"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_started
+    networks: [private]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    networks: [private]
+    restart: unless-stopped
+
+  gateway:                  # the only service that is reachable from your computer
+    build:
+      context: .
+      dockerfile: deployment/containers/gateway.Dockerfile
+    ports:
+      - "127.0.0.1:8081:80"
+    depends_on:
+      - api
+    networks: [private, edge]
+    restart: unless-stopped
+
+  model-puller:             # one-off download step, run by hand (profile "setup")
+    image: ollama/ollama:latest
+    profiles: ["setup"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve >/dev/null 2>&1 &
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        ollama pull ${CHAT_MODEL:-llama3.2:3b}
+        ollama pull ${EMBED_MODEL:-nomic-embed-text}
+    volumes:
+      - ollama:/root/.ollama
+    networks: [edge]
+
+networks:
+  private:
+    internal: true          # no route to the internet
+  edge: {}                  # normal network, used only by the gateway and the model download step
+
+volumes:
+  pgdata:
+  ollama:
