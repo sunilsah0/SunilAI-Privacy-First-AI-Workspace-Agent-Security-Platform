@@ -44,3 +44,7 @@ def test_env_example_contains_placeholders_only():
             continue
         key, _, value = line.partition("=")
         assert value == "CHANGE_ME", f"{key} must be a CHANGE_ME placeholder"
+
+
+def test_ollama_cloud_features_are_disabled():
+    assert str(SERVICES["ollama"]["environment"]["OLLAMA_NO_CLOUD"]) == "1"
