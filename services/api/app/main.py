@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session, aliased
 
 from .models import UserSettings, BreakGlassGrant, BreakGlassAccessLog
 
-app = FastAPI(title="VerityAI")
+app = FastAPI(title="SunilAI")
 if network_guard.OFFLINE_MODE:
     network_guard.install_guard()
 bearer = HTTPBearer()

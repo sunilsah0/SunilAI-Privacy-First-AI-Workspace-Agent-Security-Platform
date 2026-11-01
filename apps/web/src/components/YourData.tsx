@@ -66,7 +66,7 @@ export default function YourData({ onDeleted }: { onDeleted: () => void }) {
 
   return (
     <div>
-      <h2>My data</h2>
+     
       {error && <p className="error" role="alert">{error}</p>}
 
       <div className="card">

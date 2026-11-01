@@ -1,71 +1,133 @@
 import { useEffect, useState } from "react";
-import { setToken, setUnauthorizedHandler } from "./api";
+import { api, setToken, setUnauthorizedHandler } from "./api";
 import Login from "./components/Login";
 import Chat from "./components/Chat";
 import Documents from "./components/Documents";
-import Agent from "./components/Agent";
-import Privacy from "./components/Privacy";
 import Organization from "./components/Organization";
+import Agent from "./components/Agent";
 import YourData from "./components/YourData";
+import Privacy from "./components/Privacy";
+import { Icon, type IconName } from "./components/Icons";
+import { Seal, type Status } from "./components/Seal";
 
-   type Tab = "chat" | "documents" | "organization" | "agent" | "data" | "privacy";
-   const TABS: { id: Tab; label: string }[] = [
-     { id: "chat", label: "Chat" },
-     { id: "documents", label: "Documents" },
-     { id: "organization", label: "Organization" },
-     { id: "agent", label: "Agent permissions" },
-     { id: "data", label: "My data" },
-     { id: "privacy", label: "Privacy status" },
-    
-   ];
+type Tab = "chat" | "documents" | "organization" | "agent" | "data" | "privacy";
+
+const TABS: { id: Tab; label: string; icon: IconName; blurb: string }[] = [
+  { id: "chat", label: "Chat", icon: "chat", blurb: "Talk to a model that runs on your own machine or server." },
+  { id: "documents", label: "Documents", icon: "file", blurb: "Upload files and search them by meaning. Your documents stay in your own database." },
+  { id: "organization", label: "Organization", icon: "building", blurb: "Shared workspaces, roles and an audit trail for your team." },
+  { id: "agent", label: "Agent", icon: "agent", blurb: "Decide what the AI may do. It can only propose; the server and you decide." },
+  { id: "data", label: "My data", icon: "data", blurb: "Download your data, set clean-up rules, or delete your account." },
+  { id: "privacy", label: "Privacy", icon: "shield", blurb: "What we checked, what is only a setting, and what we have not tested." },
+];
+
+type Theme = "auto" | "light" | "dark";
+const THEME_KEY = "sunilai-theme";
+
+function readTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === "light" || saved === "dark" ? saved : "auto";
+  } catch {
+    return "auto";
+  }
+}
 
 export default function App() {
-  const [email, setEmail] = useState<string | null>(null);   // logged in when not null
+  const [email, setEmail] = useState<string | null>(null); // logged in when not null
   const [tab, setTab] = useState<Tab>("chat");
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const [statuses, setStatuses] = useState<Status[]>([]);
+  const onPrivacy = tab === "privacy";
 
   useEffect(() => {
-    setUnauthorizedHandler(() => { setToken(null); setEmail(null); });   // login expired
+    setUnauthorizedHandler(() => {
+      setToken(null);
+      setEmail(null);
+    });
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* storage may be unavailable; the theme still works for this visit */
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (!email) return;
+    api<{ checks: { status: Status }[] }>("/privacy/status")
+      .then((r) => setStatuses(r.checks.map((c) => c.status)))
+      .catch(() => setStatuses([]));
+  }, [email, onPrivacy]);
+
+  function cycleTheme() {
+    setTheme((t) => (t === "auto" ? "light" : t === "light" ? "dark" : "auto"));
+  }
 
   function logout() {
     setToken(null);
     setEmail(null);
     setTab("chat");
+    setStatuses([]);
   }
 
-  return (
-    <div className="app">
-      <header className="top">
-        <h1>VerityAI</h1>
-        {email && (
-          <div className="row">
-            <span className="muted">{email}</span>
-            <button onClick={logout}>Log out</button>
-          </div>
-        )}
-      </header>
+  if (!email) {
+    return <Login onLoggedIn={(token, em) => { setToken(token); setEmail(em); }} />;
+  }
 
-      {!email ? (
-        <Login onLoggedIn={(token, em) => { setToken(token); setEmail(em); }} />
-      ) : (
-        <>
+  const current = TABS.find((t) => t.id === tab) ?? TABS[0];
+  const verified = statuses.filter((s) => s === "verified").length;
+  const trustText = statuses.length ? `${verified} of ${statuses.length} checks verified` : "Checking...";
+
+  return (
+    <>
+      <a className="skip" href="#main">Skip to content</a>
+      <header className="masthead">
+        <div className="mast-inner">
+          <span className="wordmark">SunilAI</span>
           <nav className="tabs" aria-label="Main">
             {TABS.map((t) => (
-              <button key={t.id} aria-current={tab === t.id ? "page" : undefined} onClick={() => setTab(t.id)}>
-                {t.label}
+              <button
+                key={t.id}
+                className="tab"
+                aria-current={tab === t.id ? "page" : undefined}
+                onClick={() => setTab(t.id)}
+              >
+                <Icon name={t.icon} />
+                <span>{t.label}</span>
               </button>
             ))}
           </nav>
-          <main>
-            {tab === "chat" && <Chat />}
-            {tab === "documents" && <Documents />}
-            {tab === "agent" && <Agent />}
-            {tab === "data" && <YourData onDeleted={logout} />}
-            {tab === "privacy" && <Privacy />}
-            {tab === "organization" && <Organization />}
-          </main>
-        </>
-      )}
-    </div>
+          <div className="mast-tools">
+            <button className="trust" onClick={() => setTab("privacy")} aria-label={`Privacy status: ${trustText}. Open the privacy page.`}>
+              <Seal statuses={statuses} size={40} animate />
+              <span className="trust-text">{trustText}</span>
+            </button>
+            <button className="tool small" onClick={cycleTheme} aria-label={`Colour theme: ${theme}. Press to change.`}>
+              {theme}
+            </button>
+            <span className="avatar" title={email} aria-hidden="true">{email.charAt(0).toUpperCase()}</span>
+            <button className="tool small" onClick={logout}>Log out</button>
+          </div>
+        </div>
+      </header>
+      <main className="page" id="main">
+        <div className="page-head">
+          <h1>{current.label}</h1>
+          <p>{current.blurb}</p>
+        </div>
+        {tab === "chat" && <Chat />}
+        {tab === "documents" && <Documents />}
+        {tab === "organization" && <Organization />}
+        {tab === "agent" && <Agent />}
+        {tab === "data" && <YourData onDeleted={logout} />}
+        {tab === "privacy" && <Privacy />}
+      </main>
+    </>
   );
 }

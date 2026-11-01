@@ -1,6 +1,6 @@
 # Known limitations
 
-Read this before trusting VerityAI with real data. Nothing here is hidden on purpose, and none of it is fixed yet.
+Read this before trusting SunilAI with real data. Nothing here is hidden on purpose, and none of it is fixed yet.
 
 ## Security gaps
 

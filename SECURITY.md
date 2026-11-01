@@ -1,6 +1,6 @@
 # Security policy
 
-VerityAI is a learning project and has **not** been independently audited.
+SunilAI is a learning project and has **not** been independently audited.
 
 ## Reporting a vulnerability
 

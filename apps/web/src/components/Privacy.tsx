@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText } from "../api";
+import { Seal, Stamp, type Status } from "./Seal";
 
-type Status = "verified" | "configured" | "unverified" | "failed";
 type Check = { id: string; title: string; status: Status; detail: string };
 type Report = { checks: Check[]; info: Record<string, string> };
 
-const ICON: Record<Status, string> = { verified: "✔", configured: "◐", unverified: "?", failed: "✖" };
+const ORDER: Status[] = ["verified", "configured", "unverified", "failed"];
+const LABEL: Record<Status, string> = {
+  verified: "checked just now",
+  configured: "a setting, not proven",
+  unverified: "not tested yet",
+  failed: "failed",
+};
 
 export default function Privacy() {
   const [report, setReport] = useState<Report | null>(null);
@@ -18,7 +24,8 @@ export default function Privacy() {
       setError(errorText(e));
     }
   }, []);
-    useEffect(() => {
+
+  useEffect(() => {
     api<Report>("/privacy/status")
       .then(setReport)
       .catch((e) => setError(errorText(e)));
@@ -37,38 +44,63 @@ export default function Privacy() {
     }
   }
 
+  const checks = report?.checks ?? [];
+  const count = (s: Status) => checks.filter((c) => c.status === s).length;
+
   return (
     <div>
-      <h2>Privacy and security status</h2>
-      <p className="muted">
-        ✔ verified = observed or tested just now · ◐ configured = a setting says so, not proven ·
-        ? unverified = not tested · ✖ failed. Passing checks are evidence for these cases only, not a guarantee.
-      </p>
       {error && <p className="error" role="alert">{error}</p>}
+
+      <section className="summary" aria-label="Summary">
+        <Seal statuses={checks.map((c) => c.status)} size={132} animate label="Ring of check results" />
+        <div>
+          <h2>{checks.length ? `${count("verified")} of ${checks.length} checks verified` : "Running checks..."}</h2>
+          <p className="muted prose">
+            Each line is something we checked just now, a setting we have not proven, something not tested yet, or a
+            failure. Nothing on this page is a guarantee.
+          </p>
+          <ul className="tally">
+            {ORDER.map((s) => (
+              <li key={s}>
+                <Stamp status={s} />
+                <span>{count(s)} {LABEL[s]}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
       <div className="row">
-        <button onClick={() => void load()}>Re-run checks</button>
+        <button onClick={() => void load()}>Check again</button>
         <button onClick={() => void probe()}>Test the firewall (one connection attempt)</button>
       </div>
 
       {report && (
         <>
-          {report.checks.map((c) => (
-            <div key={c.id} className={`card ${c.status}`}>
-              <span className="badge">{ICON[c.status]} {c.status}</span> <strong>{c.title}</strong>
-              <p>{c.detail}</p>
-            </div>
-          ))}
-          <div className="card">
+          <ul className="ledger">
+            {checks.map((c) => (
+              <li key={c.id} className={`ledger-row ${c.status}`}>
+                <Stamp status={c.status} />
+                <div>
+                  <strong>{c.title}</strong>
+                  <p className="muted">{c.detail}</p>
+                </div>
+                <span className="verdict">{LABEL[c.status]}</span>
+              </li>
+            ))}
+          </ul>
+
+          <section className="card">
             <h3>Where things happen</h3>
-            <dl>
+            <dl className="facts">
               {Object.entries(report.info).map(([k, v]) => (
-                <div key={k}>
-                  <dt><strong>{k.replace(/_/g, " ")}</strong></dt>
+                <div key={k} className="fact">
+                  <dt>{k.replace(/_/g, " ")}</dt>
                   <dd>{v}</dd>
                 </div>
               ))}
             </dl>
-          </div>
+          </section>
         </>
       )}
     </div>

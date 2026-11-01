@@ -76,7 +76,7 @@ export default function OrgPanel({ org, me }: { org: Org; me: { id: string } }) 
     <div>
       <div className="card">
         <h2>{org.name}</h2>
-        <p>Your role: <strong>{role}</strong></p>
+        <p>Your role: <span className={`role role-${role}`}>{role}</span></p>
         <p className="muted">{ROLE_HELP[role]}</p>
         <p className="muted">
           No role in this organization can read another person's private chats, documents or memory.
@@ -105,7 +105,7 @@ export default function OrgPanel({ org, me }: { org: Org; me: { id: string } }) 
                         >
                           {assignableRoles(role).map((r) => <option key={r} value={r}>{r}</option>)}
                         </select>
-                      ) : m.role}
+                      ) : <span className={`role role-${m.role}`}>{m.role}</span>}
                     </td>
                     <td>{m.status}</td>
                     <td>

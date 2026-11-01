@@ -1,4 +1,4 @@
-# VerityAI
+# SunilAI-Privacy-First AI Workspace & Agent Security Platform
 
 A privacy-first AI workspace with a permission layer that sits **outside** the AI model.
 
@@ -64,20 +64,20 @@ We do **not** claim: that it is "100% private", "fully secure", audited, certifi
 
 ## Documentation
 
-| File | What it is |
-|---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, trust boundaries, request flow |
-| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | what we defend against, and what we do not |
-| [docs/SECURITY_REQUIREMENTS.md](docs/SECURITY_REQUIREMENTS.md) | numbered requirements and the role matrix |
-| [docs/PRIVACY_DESIGN.md](docs/PRIVACY_DESIGN.md) | where data lives and what leaves the device |
-| [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md) | retention, export, deletion |
-| [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | backup and restore steps |
-| [docs/COMPETITOR_ANALYSIS.md](docs/COMPETITOR_ANALYSIS.md) | similar tools, from their public documentation |
-| [docs/PRODUCT_DIFFERENTIATION.md](docs/PRODUCT_DIFFERENTIATION.md) | five testable differences, with limits |
-| [docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md) | the original 25 test requirements and their status |
-| [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | everything that is missing or weak |
-| [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md) | what is done and what comes next |
-| [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md) | current state and test results |
+| File                                                              | What it is                                         |
+| ----------------------------------------------------------------- | -------------------------------------------------- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | components, trust boundaries, request flow         |
+| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                       | what we defend against, and what we do not         |
+| [docs/SECURITY_REQUIREMENTS.md](docs/SECURITY_REQUIREMENTS.md)     | numbered requirements and the role matrix          |
+| [docs/PRIVACY_DESIGN.md](docs/PRIVACY_DESIGN.md)                   | where data lives and what leaves the device        |
+| [docs/DATA_LIFECYCLE.md](docs/DATA_LIFECYCLE.md)                   | retention, export, deletion                        |
+| [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md)                   | backup and restore steps                           |
+| [docs/COMPETITOR_ANALYSIS.md](docs/COMPETITOR_ANALYSIS.md)         | similar tools, from their public documentation     |
+| [docs/PRODUCT_DIFFERENTIATION.md](docs/PRODUCT_DIFFERENTIATION.md) | five testable differences, with limits             |
+| [docs/TEST_COVERAGE.md](docs/TEST_COVERAGE.md)                     | the original 25 test requirements and their status |
+| [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)             | everything that is missing or weak                 |
+| [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md)         | what is done and what comes next                   |
+| [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md)                       | current state and test results                     |
 
 ## License
 
