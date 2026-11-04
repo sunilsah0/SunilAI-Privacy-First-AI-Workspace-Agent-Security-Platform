@@ -2,6 +2,20 @@
 
 A privacy-first AI workspace with a permission layer that sits **outside** the AI model.
 
+## Try it
+
+- **Download:** go to the [Releases page](https://github.com/YOUR-NAME/YOUR-REPO/releases/latest) and pick **Personal** (one person, own computer) or **Enterprise** (a team, on a server).
+- **Live demo:** https://demo.yourdomain.com (simulated AI, wiped every night, please enter no real information) *(add once it is running)*
+
+## How to use it
+
+1. Install Docker, unzip the package, run the installer (`install.ps1` on Windows, `bash install.sh` on Linux or macOS).
+2. Open the address it prints and create your account.
+3. **Chat** with a model that runs on your own machine. **Documents:** upload `.txt`, `.md` or `.pdf` files and search them. **Agent:** choose what the AI is allowed to do; risky actions wait for your approval. **Privacy:** see which checks were verified and which are only settings.
+4. Your data stays in your own database. Download it or delete your account any time from **My data**.
+
+SunilAI is a learning project and has not been independently audited. See docs/KNOWN_LIMITATIONS.md.
+
 It runs a local model (Ollama), keeps your data in your own PostgreSQL database, and enforces who can see what **inside the database**, not only in the app code or in prompts.
 
 > **Status: working prototype, built step by step as a learning project.**
@@ -79,10 +93,4 @@ We do **not** claim: that it is "100% private", "fully secure", audited, certifi
 | [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md)         | what is done and what comes next                   |
 | [docs/BUILD_STATUS.md](docs/BUILD_STATUS.md)                       | current state and test results                     |
 
-## License
 
-Choose a license before making the repository public (Apache-2.0 is a common permissive choice). On GitHub: **Add file, Create new file, name it `LICENSE`, then use "Choose a license template"**.
-
-## Reporting a security problem
-
-See [SECURITY.md](SECURITY.md).
