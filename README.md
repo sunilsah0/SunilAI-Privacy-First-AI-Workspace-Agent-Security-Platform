@@ -4,7 +4,7 @@ A privacy-first AI workspace with a permission layer that sits **outside** the A
 
 ## Try it
 
-- **Download:** go to the [Releases page](https://github.com/YOUR-NAME/YOUR-REPO/releases/latest) and pick **Personal** (one person, own computer) or **Enterprise** (a team, on a server).
+- **Download:** go to the [Releases page] (https://github.com/sunilsah0/SunilAI-Privacy-First-AI-Workspace-Agent-Security-Platform/releases/tag/v0.1.0) and pick **Personal** (one person, own computer) or **Enterprise** (a team, on a server).
 - **Live demo:** https://demo.yourdomain.com (simulated AI, wiped every night, please enter no real information) *(add once it is running)*
 
 ## How to use it
