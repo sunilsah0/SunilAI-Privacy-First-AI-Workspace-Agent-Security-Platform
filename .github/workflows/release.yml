@@ -1,0 +1,29 @@
+name: Release
+
+# Push a tag such as v0.1.0 to build the two downloadable packages and publish them.
+#   git tag v0.1.0
+#   git push origin v0.1.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # needed to create the release and attach files
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the packages
+        run: python scripts/make_packages.py "${GITHUB_REF_NAME}" dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "SunilAI ${GITHUB_REF_NAME}" \
+            --generate-notes

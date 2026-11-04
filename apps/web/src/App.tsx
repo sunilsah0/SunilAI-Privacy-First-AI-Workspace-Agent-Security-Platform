@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, setToken, setUnauthorizedHandler } from "./api";
+import type { PublicInfo } from "./types";
 import Login from "./components/Login";
 import Chat from "./components/Chat";
 import Documents from "./components/Documents";
@@ -33,12 +34,22 @@ function readTheme(): Theme {
   }
 }
 
+export const DEMO_NOTICE =
+  "Demo: AI replies are simulated and this server is wiped regularly. Please do not enter real or personal information.";
+
 export default function App() {
   const [email, setEmail] = useState<string | null>(null); // logged in when not null
   const [tab, setTab] = useState<Tab>("chat");
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [info, setInfo] = useState<PublicInfo | null>(null);
   const onPrivacy = tab === "privacy";
+
+  useEffect(() => {
+    api<PublicInfo>("/public-info")
+      .then(setInfo)
+      .catch(() => setInfo(null));
+  }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -77,25 +88,27 @@ export default function App() {
   }
 
   if (!email) {
-    return <Login onLoggedIn={(token, em) => { setToken(token); setEmail(em); }} />;
+    return <Login info={info} onLoggedIn={(token, em) => { setToken(token); setEmail(em); }} />;
   }
 
-  const current = TABS.find((t) => t.id === tab) ?? TABS[0];
+  const tabs = info?.edition === "personal" ? TABS.filter((t) => t.id !== "organization") : TABS;
+  const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   const verified = statuses.filter((s) => s === "verified").length;
   const trustText = statuses.length ? `${verified} of ${statuses.length} checks verified` : "Checking...";
 
   return (
     <>
       <a className="skip" href="#main">Skip to content</a>
+      {info?.demo && <div className="banner" role="note">{DEMO_NOTICE}</div>}
       <header className="masthead">
         <div className="mast-inner">
           <span className="wordmark">SunilAI</span>
           <nav className="tabs" aria-label="Main">
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t.id}
                 className="tab"
-                aria-current={tab === t.id ? "page" : undefined}
+                aria-current={current.id === t.id ? "page" : undefined}
                 onClick={() => setTab(t.id)}
               >
                 <Icon name={t.icon} />
@@ -121,12 +134,12 @@ export default function App() {
           <h1>{current.label}</h1>
           <p>{current.blurb}</p>
         </div>
-        {tab === "chat" && <Chat />}
-        {tab === "documents" && <Documents />}
-        {tab === "organization" && <Organization />}
-        {tab === "agent" && <Agent />}
-        {tab === "data" && <YourData onDeleted={logout} />}
-        {tab === "privacy" && <Privacy />}
+        {current.id === "chat" && <Chat />}
+        {current.id === "documents" && <Documents />}
+        {current.id === "organization" && <Organization />}
+        {current.id === "agent" && <Agent />}
+        {current.id === "data" && <YourData onDeleted={logout} />}
+        {current.id === "privacy" && <Privacy />}
       </main>
     </>
   );

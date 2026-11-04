@@ -48,10 +48,15 @@ def _fake_vector(text: str) -> list[float]:
 class FakeProvider:
     """For tests: no real AI needed."""
     def chat(self, messages: list[dict], model: str) -> str:
-        return "FAKE REPLY to: " + messages[-1]["content"]
+        return "Demo reply (no real AI is running): " + messages[-1]["content"]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [_fake_vector(t) for t in texts]
 
+#def get_provider() -> ModelProvider:
+    #return OllamaProvider()
+
 def get_provider() -> ModelProvider:
+    if os.getenv("MODEL_PROVIDER", "ollama") == "fake":
+       return FakeProvider()          # demo servers: simulated replies, no real AI
     return OllamaProvider()

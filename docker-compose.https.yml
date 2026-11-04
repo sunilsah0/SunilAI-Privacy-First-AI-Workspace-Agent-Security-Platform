@@ -1,0 +1,29 @@
+# Adds automatic HTTPS in front of SunilAI. Use it together with the main file:
+#   docker compose -f docker-compose.release.yml -f docker-compose.https.yml up -d --build
+# Requirements: a domain name pointing at this server, and ports 80 and 443 reachable from the internet.
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: deployment/containers/caddy.Dockerfile
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:?Set SITE_ADDRESS in .env (your domain name, for example chat.example.com)}"
+      ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env (an email address for certificate notices)}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data        # keeps your certificates between restarts
+      - caddy_config:/config
+    depends_on:
+      - api
+    networks: [private, edge]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  gateway:
+    profiles: ["http-only"]     # the plain-HTTP gateway is not started when HTTPS is on
+
+volumes:
+  caddy_data:
+  caddy_config:

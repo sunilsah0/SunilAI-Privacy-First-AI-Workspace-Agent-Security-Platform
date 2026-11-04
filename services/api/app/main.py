@@ -35,7 +35,28 @@ from sqlalchemy.orm import Session, aliased
 
 from .models import UserSettings, BreakGlassGrant, BreakGlassAccessLog
 
+import hmac
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, Request
+from . import network_guard, privacy, security
+from .ratelimit import limiter, client_ip, too_many
+
 app = FastAPI(title="SunilAI")
+
+@app.middleware("http")
+async def limit_each_address(request: Request, call_next):
+     try:
+         limiter.check(f"all:ip:{client_ip(request)}", 300, 60)
+     except HTTPException as e:
+         return JSONResponse({"detail": e.detail}, status_code=e.status_code, headers=e.headers)
+     return await call_next(request)
+
+@app.middleware("http")
+async def hide_enterprise_routes_in_personal_edition(request: Request, call_next):
+    if security.EDITION == "personal" and request.url.path.startswith(("/orgs", "/breakglass")):
+         return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
+
+
 if network_guard.OFFLINE_MODE:
     network_guard.install_guard()
 bearer = HTTPBearer()
@@ -55,10 +76,26 @@ def current_user(cred: HTTPAuthorizationCredentials = Depends(bearer),
         raise HTTPException(401, "Invalid or expired token")
     set_rls_user(db, user.id)
     return user
+    
+def limited(name: str, limit: int, window: int):
+    """Per-person limit for expensive endpoints."""
+    def check(user: User = Depends(current_user)) -> None:
+         limiter.check(f"{name}:user:{user.id}", limit, window)
+    return check
 
+class RegisterIn(Creds):
+     invite_code: str = Field(default="", max_length=200)
 
 @app.post("/auth/register", status_code=201)
-def register(c: Creds, db: Session = Depends(get_db)):
+def register(c: RegisterIn, request: Request, db: Session = Depends(get_db)):
+    limiter.check(f"register:ip:{client_ip(request)}", 10, 3600)
+    mode = security.REGISTRATION_MODE
+    if mode == "closed":
+        raise HTTPException(403, "Sign-up is closed on this installation")
+    if mode == "first_user" and db.scalar(select(func.count()).select_from(User)) > 0:
+        raise HTTPException(403, "Sign-up is closed: this installation already has its owner account")
+    if mode == "invite" and not hmac.compare_digest(c.invite_code.encode(), security.INVITE_CODE.encode()):
+        raise HTTPException(403, "A valid invite code is required")
     if len(c.password) < 10:
         raise HTTPException(400, "Password must be at least 10 characters")
     if db.scalar(select(User).where(User.email == c.email)):
@@ -68,11 +105,19 @@ def register(c: Creds, db: Session = Depends(get_db)):
     return {"ok": True}
 
 @app.post("/auth/login")
-def login(c: Creds, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == c.email))
-    if not user or not verify_password(c.password, user.password_hash):
-        raise HTTPException(401, "Wrong email or password")  # same message for both cases
-    return {"access_token": create_token(user.id)}
+def login(c: Creds, request: Request, db: Session = Depends(get_db)):
+         limiter.check(f"login:ip:{client_ip(request)}", 20, 60)
+         failures = f"login-fail:{c.email.lower()}"
+         wait = limiter.is_blocked(failures, 5, 900)
+         if wait:
+             raise too_many(wait)
+         user = db.scalar(select(User).where(User.email == c.email))
+         if not user or not verify_password(c.password, user.password_hash):
+             limiter.record(failures, 900)
+             raise HTTPException(401, "Wrong email or password")
+         limiter.clear(failures)
+         return {"access_token": create_token(user.id)}
+
 
 @app.get("/me")
 def me(user: User = Depends(current_user)):
@@ -216,7 +261,7 @@ def upload_document(file: UploadFile,
     try:
         text = extract_text(file.filename or "", data)
     except ValueError:
-        raise HTTPException(400, "Only .txt, .md and .pdf files are supported")
+        raise HTTPException(400, "This file type is not supported here")
     except Exception:
         raise HTTPException(400, "Could not read this file")
 
@@ -245,13 +290,14 @@ def upload_document(file: UploadFile,
     db.commit()
     return {"id": str(doc_id), "title": doc.title, "chunks": len(pieces)}
 
-@app.post("/search")
+@app.post("/search",dependencies=[Depends(limited("search", 60, 60))])
 def search(q: SearchIn, user: User = Depends(current_user), db: Session = Depends(get_db),
            provider=Depends(get_provider)):
     try:
         return search_chunks(db, user.id, provider, q.query, q.k)
     except Exception:
         raise HTTPException(503, "Local embedding model is not available. Is Ollama running?")
+@app.post("/search", dependencies=[Depends(limited("search", 60, 60))])
 
 class AskIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=4000)
@@ -691,3 +737,19 @@ def delete_my_account(body: DeleteMeIn, user: User = Depends(current_user), db: 
     db.delete(user)      # the database removes everything that belongs to this person
     db.commit()
     return {"deleted": True}
+
+
+@app.post("/documents", status_code=201, dependencies=[Depends(limited("notes", 60, 3600))])
+@app.post("/documents/upload", status_code=201, dependencies=[Depends(limited("upload", 20, 3600))])
+#@app.post("/search", dependencies=[Depends(limited("search", 60, 60))])
+
+@app.post("/agent/ask", dependencies=[Depends(limited("agent", 20, 60))])
+@app.post("/conversations/{conv_id}/messages", dependencies=[Depends(limited("chat", 30, 60))])
+
+@app.get("/public-info")
+def public_info(db: Session = Depends(get_db)):
+     mode = security.REGISTRATION_MODE
+     if mode == "first_user":
+         mode = "open" if db.scalar(select(func.count()).select_from(User)) == 0 else "closed"
+     return {"edition": security.EDITION, "demo": security.DEMO_MODE, "registration": mode}
+

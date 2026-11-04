@@ -1,14 +1,17 @@
 import io
+import os
 from pypdf import PdfReader
 from sqlalchemy import select
 from .models import Chunk, Document
+
+ALLOW_PDF = os.getenv("ALLOW_PDF_UPLOADS", "1") == "1"
 
 def extract_text(filename: str, data: bytes) -> str:
     """Treat every file as untrusted. Only a few simple formats for now."""
     name = filename.lower()
     if name.endswith((".txt", ".md")):
         return data.decode("utf-8", errors="replace")
-    if name.endswith(".pdf"):
+    if name.endswith(".pdf") and ALLOW_PDF:
         reader = PdfReader(io.BytesIO(data))
         return "\n".join((page.extract_text() or "") for page in reader.pages)
     raise ValueError("unsupported file type")

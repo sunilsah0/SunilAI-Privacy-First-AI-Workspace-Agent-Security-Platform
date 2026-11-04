@@ -68,7 +68,23 @@ jobs:
         run: docker build -f deployment/containers/gateway.Dockerfile -t verityai-gateway .
       - name: Check the release compose file is valid
         env:
+          
           DB_OWNER_PASSWORD: ci-placeholder
           DB_APP_PASSWORD: ci_placeholder_value
           SECRET_KEY: ci-placeholder-secret-key-that-is-long-enough-0123456789
+          EDITION: personal
+          REGISTRATION_MODE: closed
         run: docker compose -f docker-compose.release.yml config --quiet
+
+      - name: Build the HTTPS gateway image
+        run: docker build -f deployment/containers/caddy.Dockerfile -t sunilai-caddy .
+      - name: Check the HTTPS overlay is valid
+        env:
+              DB_OWNER_PASSWORD: ci-placeholder
+              DB_APP_PASSWORD: ci_placeholder_value
+              SECRET_KEY: ci-placeholder-secret-key-that-is-long-enough-0123456789
+              EDITION: personal
+              REGISTRATION_MODE: closed
+              SITE_ADDRESS: demo.example.com
+              ACME_EMAIL: ci@example.com
+        run: docker compose -f docker-compose.release.yml -f docker-compose.https.yml config --quiet

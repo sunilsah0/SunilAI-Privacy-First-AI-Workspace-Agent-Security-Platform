@@ -1,5 +1,4 @@
-name: verityai-release     # a different name from your dev setup, so the two never share data
-
+name: sunilai-release      # a different name from your dev setup, so the two never share data
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -20,7 +19,7 @@ services:
     build:
       context: .
       dockerfile: deployment/containers/api.Dockerfile
-    image: verityai-api:local
+    image: sunilai-api:local
     command: ["alembic", "upgrade", "head"]
     environment:
       MIGRATION_DATABASE_URL: "postgresql+psycopg://verity:${DB_OWNER_PASSWORD:?Set DB_OWNER_PASSWORD in .env}@db:5432/verity"
@@ -35,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: deployment/containers/api.Dockerfile
-    image: verityai-api:local
+    image: sunilai-api:local
     environment:
       APP_ENV: production
       OFFLINE_MODE: "1"
@@ -47,6 +46,14 @@ services:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env}"
       DATABASE_URL: "postgresql+psycopg://verity_app:${DB_APP_PASSWORD:?Set DB_APP_PASSWORD in .env}@db:5432/verity"
       NETWORK_ENFORCEMENT_NOTE: "Docker private network with no route to the internet"
+      EDITION: "${EDITION:?Set EDITION in .env (personal or enterprise)}"
+      REGISTRATION_MODE: "${REGISTRATION_MODE:?Set REGISTRATION_MODE in .env (open, invite, first_user or closed)}"
+      INVITE_CODE: "${INVITE_CODE:-}"
+      DEMO_MODE: "${DEMO_MODE:-0}"
+      MODEL_PROVIDER: "${MODEL_PROVIDER:-ollama}"
+      ALLOW_PDF_UPLOADS: "${ALLOW_PDF_UPLOADS:-1}"
+      TRUST_PROXY: "1"
+      RATE_LIMIT_ENABLED: "1"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -73,7 +80,7 @@ services:
       context: .
       dockerfile: deployment/containers/gateway.Dockerfile
     ports:
-      - "127.0.0.1:8081:80"
+      - "127.0.0.1:8082:80"
     depends_on:
       - api
     networks: [private, edge]

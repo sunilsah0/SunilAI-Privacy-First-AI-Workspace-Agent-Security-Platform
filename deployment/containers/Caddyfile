@@ -1,0 +1,34 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# SITE_ADDRESS is your domain name. For a local test without HTTPS use: http://localhost
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		# Start with one day. Raise it once HTTPS works for you.
+		Strict-Transport-Security "max-age=86400"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+	}
+
+	# Caddy replaces any client-supplied X-Forwarded-For with the real connection address,
+	# which is what the API's rate limiter trusts. Do not put another proxy in front of Caddy
+	# unless you also configure trusted_proxies.
+	handle_path /api/* {
+		request_body {
+			max_size 6MB
+		}
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
